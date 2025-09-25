@@ -10,152 +10,124 @@ from PIL import Image
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 
-app = Flask(__name__)
+# Création de l'app Flask
+app = Flask(
+    __name__,
+    static_folder='../static',
+    template_folder='../templates'
+)
+app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key')
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB max upload size
-app.secret_key = 'super-secret-key'  # Necessary for session management
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB
 
-# Ensure the upload folder exists
+# S’assure que le dossier uploads existe
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 def allowed_file(filename):
-    return '.' in filename and \
-           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def detect_panels(image_path):
-    """
-    Detects rectangular panels in an image using OpenCV.
-    Returns a list of dictionaries, each containing the x, y, width, and height of a panel.
-    """
+    """Détecte les cases rectangulaires sur la planche."""
     try:
         img = cv2.imread(image_path)
         if img is None:
-            print(f"Error: Image not loaded from {image_path}")
             return []
-
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        # Invert the image so the black borders become white objects
-        thresh = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY_INV)[1]
+        edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+        kernel = np.ones((3,3), np.uint8)
+        edges = cv2.dilate(edges, kernel, iterations=1)
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        # Find contours
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
         panels = []
-        img_height, img_width, _ = img.shape
-        min_area = (img_width * img_height) * 0.005 # Panels must be at least 0.5% of the image area
-
-        for contour in contours:
-            area = cv2.contourArea(contour)
-            if area > min_area:
-                peri = cv2.arcLength(contour, True)
-                approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
-                
-                # Assume panels are rectangular (4 vertices)
-                if len(approx) == 4:
-                    x, y, w, h = cv2.boundingRect(approx)
+        for cnt in contours:
+            epsilon = 0.02 * cv2.arcLength(cnt, True)
+            approx = cv2.approxPolyDP(cnt, epsilon, True)
+            area = cv2.contourArea(cnt)
+            if len(approx) == 4 and area > 1000:
+                x, y, w, h = cv2.boundingRect(approx)
+                ratio = w / h if h else 0
+                if 0.2 < ratio < 5.0:
                     panels.append({'x': x, 'y': y, 'width': w, 'height': h})
-        
-        # Sort panels from top-to-bottom, then left-to-right
         panels.sort(key=lambda p: (p['y'], p['x']))
-        
         return panels
-    except Exception as e:
-        print(f"An error occurred during panel detection: {e}")
+    except Exception:
         return []
 
-@app.route('/')
+@app.route('/', methods=['GET'])
 def index():
-    template_image = session.get('template_image', None)
-    panel_images = session.get('panel_images', None)
-    panel_coordinates = session.get('panel_coordinates', None)
-    return render_template('index.html', 
-                           template_image=template_image, 
-                           panel_images=panel_images, 
-                           panel_coordinates=panel_coordinates)
+    """Affiche la page principale."""
+    return render_template('index.html',
+                           template_image=session.get('template_image'),
+                           panel_images=session.get('panel_images', []),
+                           panel_coordinates=session.get('panel_coordinates', []))
 
 @app.route('/upload_template', methods=['POST'])
 def upload_template():
-    if 'template_file' not in request.files:
-        return redirect(request.url)
-    file = request.files['template_file']
-    if file.filename == '':
-        return redirect(request.url)
-    if file and allowed_file(file.filename):
-        filename = secure_filename(file.filename)
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(file_path)
-        session['template_image'] = filename
-        
-        # Detect panels and store coordinates in session
-        panel_coords = detect_panels(file_path)
-        session['panel_coordinates'] = panel_coords
-        
-        # Clear old panel images when a new template is uploaded
-        session.pop('panel_images', None)
+    """Reçoit la planche, détecte les cases et stocke en session."""
+    file = request.files.get('template_file')
+    if not file or file.filename == '' or not allowed_file(file.filename):
+        return redirect(url_for('index'))
+    filename = secure_filename(file.filename)
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    file.save(filepath)
+
+    panels = detect_panels(filepath)
+    session['template_image'] = filename
+    session['panel_coordinates'] = panels
     return redirect(url_for('index'))
 
 @app.route('/upload_panels', methods=['POST'])
 def upload_panels():
+    """Reçoit les images à placer dans les cases."""
     files = request.files.getlist('panel_files[]')
-    panel_filenames = session.get('panel_images', [])
-    
+    panel_images = session.get('panel_images', [])
     for file in files:
         if file and allowed_file(file.filename):
-            filename = secure_filename(file.filename)
-            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-            file.save(file_path)
-            if filename not in panel_filenames:
-                panel_filenames.append(filename)
-    
-    session['panel_images'] = panel_filenames
+            fn = secure_filename(file.filename)
+            path = os.path.join(app.config['UPLOAD_FOLDER'], fn)
+            file.save(path)
+            panel_images.append(fn)
+    session['panel_images'] = panel_images
     return redirect(url_for('index'))
 
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
+    """Service pour renvoyer les fichiers uploadés."""
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 @app.route('/generate', methods=['POST'])
-def generate_image():
-    data = request.json
-    template_image_name = session.get('template_image')
+def generate_comic():
+    """Génère la planche finale avec les images collées."""
+    data = request.get_json() or {}
+    images_data = data.get('images', [])
+    template_image = session.get('template_image')
+    if not template_image:
+        return jsonify({'error': 'Aucune planche template'}), 400
 
-    if not template_image_name:
-        return jsonify({'error': 'No template image found'}), 400
+    template_path = os.path.join(app.config['UPLOAD_FOLDER'], template_image)
+    template = Image.open(template_path).convert('RGB')
+    result = template.copy()
 
-    base_path = os.path.join(app.config['UPLOAD_FOLDER'], template_image_name)
-    base_image = Image.open(base_path).convert('RGBA')
-    # Créer une copie pour ne pas modifier l'original en mémoire
-    final_image = base_image.copy()
+    for img_data in images_data:
+        try:
+            img_path = os.path.join(app.config['UPLOAD_FOLDER'], img_data['src'])
+            panel_img = Image.open(img_path).convert('RGB')
+            w = int(img_data['img_w'])
+            h = int(w * (panel_img.height / panel_img.width))
+            panel_img = panel_img.resize((w, h), Image.Resampling.LANCZOS)
+            x = int(img_data['panel_x'] + img_data['img_left'])
+            y = int(img_data['panel_y'] + img_data['img_top'])
+            result.paste(panel_img, (x, y))
+        except Exception:
+            continue
 
-    for img_data in data.get('images', []):
-        print(f"DEBUG: Received image data: {img_data}")
-        # Créer une toile vierge pour la case
-        panel_canvas = Image.new('RGBA', (img_data['panel_w'], img_data['panel_h']), (0, 0, 0, 0))
-        
-        # Ouvrir l'image source
-        panel_path = os.path.join(app.config['UPLOAD_FOLDER'], img_data['src'])
-        source_img = Image.open(panel_path).convert('RGBA')
-        
-        # Redimensionner l'image source en fonction du zoom
-        # On calcule la nouvelle hauteur en conservant le ratio
-        original_w, original_h = source_img.size
-        new_w = img_data['img_w']
-        new_h = int(original_h * (new_w / original_w))
-        resized_img = source_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-        
-        # Coller l'image zoomée/pannér sur la toile de la case
-        paste_position = (int(img_data['img_left']), int(img_data['img_top']))
-        panel_canvas.paste(resized_img, paste_position)
-        
-        # Coller la case complétée sur l'image finale
-        final_image.paste(panel_canvas, (img_data['panel_x'], img_data['panel_y']), panel_canvas)
+    buf = io.BytesIO()
+    result.save(buf, format='PNG')
+    buf.seek(0)
+    return send_file(buf, mimetype='image/png', as_attachment=True, download_name='planche.png')
 
-    # Save to a bytes buffer
-    img_io = io.BytesIO()
-    final_image.save(img_io, 'PNG')
-    img_io.seek(0)
-
-    return send_file(img_io, mimetype='image/png', as_attachment=True, download_name='ma_planche_de_bd.png')
+# Point d’entrée pour Vercel : exporte l’app
+handler = app
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5004) # Using a different port to avoid conflicts
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
