@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Créateur de BD</title>
+    <style>
+        body { font-family: sans-serif; margin: 2em; }
+        .container { max-width: 1200px; margin: auto; }
+        h1, h2 { text-align: center; }
+        .main-layout { display: flex; gap: 2em; margin-top: 1em; }
+        .editor-container { flex-grow: 1; }
+        .editor { border: 2px dashed #ccc; padding: 0; min-height: 500px; position: relative; }
+        .sidebar { width: 250px; border-left: 1px solid #ddd; padding-left: 1em; }
+        #panel-thumbnails img { max-width: 100px; margin: 5px; cursor: grab; }
+
+        /* CORRECTION CSS - Ajout du padding pour préserver les bordures */
+        .panel-drop-zone {
+            position: absolute;
+            background-color: rgba(0, 100, 255, 0.1);
+            box-sizing: border-box;
+            border: 1px solid rgba(0, 100, 255, 0.4);
+            overflow: hidden;
+            padding: 2px; /* NOUVEAU: crée le retrait de 2px */
+        }
+
+        .panel-drop-zone img {
+            position: relative; /* Changé de absolute à relative */
+            cursor: move;
+            width: 100%;
+            height: auto;
+            display: block; /* Évite les espaces en bas */
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Créateur de Bande Dessinée</h1>
+
+        <h2>1. Téléchargez votre planche</h2>
+        <form action="/upload_template" method="post" enctype="multipart/form-data">
+            <p>
+                <label for="template_file">Choisir une planche (format A4) :</label>
+                <input type="file" name="template_file" id="template_file" required>
+                <input type="submit" value="Télécharger la planche">
+            </p>
+        </form>
+
+        <div class="main-layout">
+            <div class="editor-container">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <h2>Planche</h2>
+                    <button id="save-button" style="padding: 10px 20px; font-size: 16px; cursor: pointer;">Enregistrer et Télécharger</button>
+                </div>
+                <div class="editor" id="editor-area">
+                    {% if template_image %}
+                        <img src="{{ url_for('uploaded_file', filename=template_image) }}" alt="Planche de BD" style="max-width: 100%; height: auto; position: relative;">
+
+                    {% else %}
+                        <p style="padding: 1em;">Votre planche apparaîtra ici.</p>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="sidebar">
+                <h2>2. Vos Images</h2>
+                <form action="/upload_panels" method="post" enctype="multipart/form-data">
+                    <p>
+                        <label for="panel_files">Ajouter des images :</label>
+                        <input type="file" name="panel_files[]" id="panel_files" multiple required>
+                        <input type="submit" value="Télécharger les images">
+                    </p>
+                </form>
+                <div id="panel-thumbnails">
+                    {% if panel_images %}
+                        {% for image in panel_images %}
+                            <img src="{{ url_for('uploaded_file', filename=image) }}" alt="Image pour case">
+                        {% endfor %}
+                    {% else %}
+                        <p>Vos images apparaîtront ici.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Rendre les coordonnées des cases accessibles en JavaScript
+        var panelCoordinates = {{ panel_coordinates|tojson|safe if panel_coordinates else '[]' }};
+    </script>
+    <script src="{{ url_for('static', filename='main.js') }}"></script>
+</body>
+</html>
