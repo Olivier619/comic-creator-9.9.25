@@ -16,8 +16,17 @@
   ],
   "routes": [
     {
+      "src": "/api/(.*)",
+      "dest": "api/app.py"
+    },
+    {
+      "src": "/static/(.*)",
+      "headers": { "cache-control": "public, max-age=31536000" },
+      "dest": "/static/$1"
+    },
+    {
       "src": "/(.*)",
-      "dest": "api/app.py:app"
+      "dest": "api/app.py"
     }
   ]
 }
