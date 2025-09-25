@@ -1,32 +1,18 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "api/app.py",
-      "use": "@vercel/python"
-    },
-    {
-      "src": "static/**/*",
-      "use": "@vercel/static"
-    },
-    {
-      "src": "templates/**/*.html",
-      "use": "@vercel/static"
+  "functions": {
+    "api/app.py": {
+      "runtime": "python3.9"
     }
-  ],
+  },
   "routes": [
     {
-      "src": "/api/(.*)",
-      "dest": "api/app.py:handler"
-    },
-    {
       "src": "/static/(.*)",
-      "headers": { "cache-control": "public, max-age=31536000" },
       "dest": "/static/$1"
     },
     {
       "src": "/(.*)",
-      "dest": "api/app.py:handler"
+      "dest": "/api/app.py"
     }
   ]
 }
